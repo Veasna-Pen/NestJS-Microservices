@@ -10,6 +10,7 @@ import { db } from 'src/db';
 import { users } from 'src/db/schema';
 import { RegisterDto } from 'src/dto/register.dto';
 import { LoginDto } from 'src/dto/login.dto';
+import { AuthenticatedUser } from 'src/decorators/current-user.decorator';
 
 @Injectable()
 export class AuthService {
@@ -35,6 +36,23 @@ export class AuthService {
     };
   }
 
+  async login(dto: LoginDto) {
+    const [user] = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, dto.email));
+
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+
+    const isMatch = await bcrypt.compare(dto.password, user.password);
+    if (!isMatch) throw new UnauthorizedException('Invalid credentials');
+
+    return {
+      user: this.sanitize(user),
+      token: this.generateToken(user),
+    };
+  }
+
   private generateToken(user: typeof users.$inferInsert) {
     return this.jwtService.sign({
       sub: user.id,
@@ -42,6 +60,30 @@ export class AuthService {
     });
   }
 
+  async validateToken(token: string) {
+    try {
+      const payload = await this.jwtService.verifyAsync<AuthenticatedUser>(
+        token,
+        {
+          secret: process.env.JWT_SECRET!,
+        },
+      );
+
+      return {
+        valid: true,
+        userId: payload.sub,
+        email: payload.email,
+        error: '',
+      };
+    } catch {
+      return {
+        valid: false,
+        userId: null,
+        email: null,
+        error: 'Invalid token',
+      };
+    }
+  }
   private sanitize(user: typeof users.$inferInsert) {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { password, ...safe } = user;
